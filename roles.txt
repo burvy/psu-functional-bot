@@ -1,0 +1,5 @@
+# One rule per line: <message_id> <emoji> <role_id>
+# Standard emoji: paste the emoji. Custom emoji: use its numeric id
+# (type \:name: in Discord to see it).
+# Right-click -> Copy Message ID / Copy Role ID needs Developer Mode on.
+123456789012345678 🦀 234567890123456789
