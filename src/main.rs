@@ -9,14 +9,16 @@ use serenity::async_trait;
 // Core
 
 /// "React with `emoji` on `message` and you get `role`."
-#[derive(Debug, PartialEq)]
+/// The channel is only there because Discord needs it to place a reaction.
+#[derive(Clone, Debug, PartialEq)]
 struct Rule {
+    channel: ChannelId,
     message: MessageId,
-    emoji: String,
+    emoji: ReactionType,
     role: RoleId,
 }
 
-/// One rule per line: `<message_id> <emoji> <role_id>`.
+/// One rule per line: `<channel_id> <message_id> <emoji> <role_id>`.
 /// Blank lines and lines starting with `#` are ignored, as is any line that
 /// does not parse (a typo silently drops one rule instead of killing the bot).
 fn parse_rules(src: &str) -> Vec<Rule> {
@@ -24,9 +26,10 @@ fn parse_rules(src: &str) -> Vec<Rule> {
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .filter_map(|line| match line.split_whitespace().collect::<Vec<_>>()[..] {
-            [message, emoji, role] => Some(Rule {
+            [channel, message, emoji, role] => Some(Rule {
+                channel: ChannelId::new(id(channel)?),
                 message: MessageId::new(id(message)?),
-                emoji: emoji.to_string(),
+                emoji: ReactionType::try_from(emoji).ok()?,
                 role: RoleId::new(id(role)?),
             }),
             _ => None,
@@ -39,8 +42,8 @@ fn id(text: &str) -> Option<u64> {
     text.parse().ok().filter(|&n| n != 0)
 }
 
-/// How a reaction is written in the rules file: the character itself for a
-/// standard emoji, the numeric id for a custom server emoji.
+/// Two reactions are "the same" when this matches: the character itself for a
+/// standard emoji, the id for a custom one (whose name can change under us).
 fn emoji_key(emoji: &ReactionType) -> String {
     match emoji {
         ReactionType::Custom { id, .. } => id.to_string(),
@@ -53,14 +56,63 @@ fn role_for(rules: &[Rule], message: MessageId, emoji: &ReactionType) -> Option<
     let key = emoji_key(emoji);
     rules
         .iter()
-        .find(|rule| rule.message == message && rule.emoji == key)
+        .find(|rule| rule.message == message && emoji_key(&rule.emoji) == key)
         .map(|rule| rule.role)
+}
+
+/// Every message the rules mention, once each.
+fn targets(rules: &[Rule]) -> Vec<(ChannelId, MessageId)> {
+    let mut pairs: Vec<_> = rules.iter().map(|rule| (rule.channel, rule.message)).collect();
+    pairs.sort_unstable();
+    pairs.dedup();
+    pairs
+}
+
+/// Of the reactions sitting on `message`, the ones no rule allows.
+fn strays(rules: &[Rule], message: MessageId, present: &[ReactionType]) -> Vec<ReactionType> {
+    present
+        .iter()
+        .filter(|emoji| role_for(rules, message, emoji).is_none())
+        .cloned()
+        .collect()
 }
 
 // SHELL
 
+/// How often to sweep off reactions that earn no role.
+// ponytail: fixed interval, no command to run it by hand. Add one if waiting
+// an hour for a stray to disappear ever gets annoying.
+const SWEEP: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 struct Handler {
     rules: Vec<Rule>,
+    /// Set once the sweeper is running, so a reconnect does not start a second.
+    sweeping: std::sync::OnceLock<()>,
+}
+
+/// Forever: every `SWEEP`, take off any reaction that no rule allows.
+async fn sweep(http: std::sync::Arc<Http>, rules: Vec<Rule>) {
+    let mut clock = tokio::time::interval(SWEEP);
+    loop {
+        clock.tick().await;
+        for (channel, message) in targets(&rules) {
+            let posted = match http.get_message(channel, message).await {
+                Ok(posted) => posted,
+                Err(why) => {
+                    eprintln!("could not read message {message}: {why}");
+                    continue;
+                },
+            };
+            let present: Vec<_> =
+                posted.reactions.into_iter().map(|found| found.reaction_type).collect();
+            for stray in strays(&rules, message, &present) {
+                let cleared = http.delete_message_reaction_emoji(channel, message, &stray).await;
+                if let Err(why) = cleared {
+                    eprintln!("could not clear {stray} from message {message}: {why}");
+                }
+            }
+        }
+    }
 }
 
 impl Handler {
@@ -68,6 +120,9 @@ impl Handler {
         let (Some(guild), Some(user)) = (reaction.guild_id, reaction.user_id) else {
             return; // a DM: no roles to hand out
         };
+        if reaction.member.as_ref().is_some_and(|member| member.user.bot) {
+            return; // our own startup reactions, and any other bot's
+        }
         let Some(role) = role_for(&self.rules, reaction.message_id, &reaction.emoji) else {
             return; // not a reaction we care about
         };
@@ -93,8 +148,20 @@ impl EventHandler for Handler {
         self.apply(&ctx, &reaction, false).await;
     }
 
-    async fn ready(&self, _: Context, ready: Ready) {
+    /// On connect, put every rule's emoji on its message so members have
+    /// something to click.
+    async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} online with {} rules", ready.user.name, self.rules.len());
+        for rule in &self.rules {
+            let placed = ctx.http.create_reaction(rule.channel, rule.message, &rule.emoji).await;
+            if let Err(why) = placed {
+                eprintln!("could not react with {} on message {}: {why}", rule.emoji, rule.message);
+            }
+        }
+
+        if self.sweeping.set(()).is_ok() {
+            tokio::spawn(sweep(ctx.http.clone(), self.rules.clone()));
+        }
     }
 }
 
@@ -124,7 +191,7 @@ fn load_token() -> String {
 async fn main() {
     let token = load_token();
     let file = std::fs::read_to_string("roles.txt").expect("roles.txt not found");
-    let handler = Handler { rules: parse_rules(&file) };
+    let handler = Handler { rules: parse_rules(&file), sweeping: std::sync::OnceLock::new() };
 
     Client::builder(&token, GatewayIntents::GUILD_MESSAGE_REACTIONS)
         .event_handler(handler)
@@ -143,10 +210,10 @@ mod tests {
 
     const RULES: &str = "
         # pick a language
-        111 🦀 222
-        111 987654321 333
+        10 111 🦀 222
+        10 111 <:haskell:987654321> 333
         garbage line
-        111 🦀 0
+        10 111 🦀 0
     ";
 
     #[test]
@@ -154,10 +221,37 @@ mod tests {
         let rules = parse_rules(RULES);
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0], Rule {
+            channel: ChannelId::new(10),
             message: MessageId::new(111),
-            emoji: "🦀".into(),
+            emoji: ReactionType::Unicode("🦀".into()),
             role: RoleId::new(222),
         });
+    }
+
+    /// Every non-comment line of the real roles.txt survives parsing — a typo
+    /// there silently drops a role, which is the failure you would not notice.
+    #[test]
+    fn shipped_roles_file_parses() {
+        let file = std::fs::read_to_string("roles.txt").expect("roles.txt");
+        let lines = file
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .count();
+        assert_eq!(parse_rules(&file).len(), lines);
+    }
+
+    #[test]
+    fn sweep_spares_only_the_listed_reactions() {
+        let rules = parse_rules(RULES);
+        let crab = ReactionType::Unicode("🦀".into());
+        let snake = ReactionType::Unicode("🐍".into());
+        let present = [crab.clone(), snake.clone()];
+
+        assert_eq!(targets(&rules), vec![(ChannelId::new(10), MessageId::new(111))]);
+        assert_eq!(strays(&rules, MessageId::new(111), &present), vec![snake]);
+        // A message with no rules of its own keeps nothing.
+        assert_eq!(strays(&rules, MessageId::new(999), &present), vec![crab]);
     }
 
     #[test]

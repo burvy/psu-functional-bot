@@ -1,5 +1,8 @@
-# One rule per line: <message_id> <emoji> <role_id>
-# Standard emoji: paste the emoji. Custom emoji: use its numeric id
-# (type \:name: in Discord to see it).
-# Right-click -> Copy Message ID / Copy Role ID needs Developer Mode on.
-123456789012345678 🦀 234567890123456789
+# One rule per line: <channel_id> <message_id> <emoji> <role_id>
+# Standard emoji: paste the emoji. Custom emoji: type \:name: in Discord and
+# send it, which gives you <:name:123456789012345678> — paste that whole thing.
+# Right-click -> Copy Channel ID / Copy Message ID / Copy Role ID needs
+# Developer Mode on (Settings -> Advanced).
+# The bot reacts with each emoji itself on startup, so members just click.
+1549467961142812794 1549470245625008159 🔵 1549455653502980167
+1549467961142812794 1549470245625008159 🟠 1549468250511904798

@@ -5,11 +5,14 @@ Bot to handle operations on my PSU functional programming server
 ## Setup
 
 1. Create a bot in the discord developer portal and copy the token
-2. Invite with bot scope and the **Manage Roles** permission
+2. Invite with bot scope and these permissions: **Manage Roles**,
+   **Add Reactions**, **Read Message History**, **View Channel**
 3. In server settings, drag the bot's own role above every role it hands out.
 4. Turn on Developer Mode in Discord (Settings -> Advanced) so you can
    right-click to copy message and role ids.
-5. Fill in `roles.txt`: one `<message_id> <emoji> <role_id>` per line.
+5. Fill in `roles.txt`: one `<channel_id> <message_id> <emoji> <role_id>`
+   per line. On startup the bot adds each emoji to its message itself, so
+   members only have to click.
 
 ## Run
 
