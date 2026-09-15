@@ -170,10 +170,10 @@ const TOKEN_FILE: &str = "token.txt";
 
 /// The bot token: whatever is in `token.txt`, or ask for it once and save it.
 fn load_token() -> String {
-    if let Ok(saved) = std::fs::read_to_string(TOKEN_FILE) {
-        if !saved.trim().is_empty() {
-            return saved.trim().to_string();
-        }
+    if let Ok(saved) = std::fs::read_to_string(TOKEN_FILE)
+        && !saved.trim().is_empty()
+    {
+        return saved.trim().to_string();
     }
 
     println!("Paste your bot token, then press Enter:");
@@ -250,8 +250,8 @@ mod tests {
 
         assert_eq!(targets(&rules), vec![(ChannelId::new(10), MessageId::new(111))]);
         assert_eq!(strays(&rules, MessageId::new(111), &present), vec![snake]);
-        // A message with no rules of its own keeps nothing.
-        assert_eq!(strays(&rules, MessageId::new(999), &present), vec![crab]);
+        // A message no rule mentions keeps nothing.
+        assert_eq!(strays(&rules, MessageId::new(999), &present), present.to_vec());
     }
 
     #[test]

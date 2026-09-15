@@ -6,7 +6,8 @@ Bot to handle operations on my PSU functional programming server
 
 1. Create a bot in the discord developer portal and copy the token
 2. Invite with bot scope and these permissions: **Manage Roles**,
-   **Add Reactions**, **Read Message History**, **View Channel**
+   **Add Reactions**, **Read Message History**, **View Channel**,
+   **Manage Messages** (that last one is for clearing stray reactions)
 3. In server settings, drag the bot's own role above every role it hands out.
 4. Turn on Developer Mode in Discord (Settings -> Advanced) so you can
    right-click to copy message and role ids.
@@ -29,3 +30,7 @@ is saved to `token.txt` and reused after that. Pasted the wrong one? Delete
 the bot, so don't commit or share it.
 
 `roles.txt` is read once at startup, so restart the bot after editing it.
+
+Once an hour the bot clears any reaction on those messages that no rule
+lists, so the only things members can click are the ones that hand out a
+role.
